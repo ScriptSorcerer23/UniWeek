@@ -1,6 +1,6 @@
 export type UserRole = 'student' | 'society';
 export type SocietyType = 'ACM' | 'CLS' | 'CSS';
-export type EventCategory = 'Technical' | 'Cultural' | 'Sports' | 'Workshop' | 'Competition' | 'Other';
+export type EventCategory = 'Technical' | 'Cultural' | 'Sports' | 'Workshop' | 'Competition' | 'Seminar' | 'Social' | 'Other';
 
 export interface User {
   id: string;

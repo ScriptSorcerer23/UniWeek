@@ -73,14 +73,48 @@ export const authService = {
     if (authError) throw authError;
     if (!authData.user) throw new Error('Failed to login');
 
-    // Fetch user profile
-    const { data: profile, error: profileError } = await supabase
+    // Try to fetch user profile by ID first
+    let { data: profile } = await supabase
       .from('users')
       .select('*')
       .eq('id', authData.user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError) throw profileError;
+    // If not found by ID, try by email
+    if (!profile) {
+      const { data: profileByEmail } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', authData.user.email!)
+        .maybeSingle();
+      
+      profile = profileByEmail;
+    }
+
+    // If still no profile found, create a basic one
+    if (!profile) {
+      const defaultProfile = {
+        id: authData.user.id,
+        email: authData.user.email!,
+        name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'User',
+        role: 'student' as const,
+        society_type: null,
+        registered_events: [],
+        created_at: new Date().toISOString(),
+      };
+
+      const { data: newProfile } = await supabase
+        .from('users')
+        .upsert([defaultProfile], { onConflict: 'id' })
+        .select()
+        .single();
+
+      profile = newProfile;
+    }
+
+    if (!profile) {
+      throw new Error('Could not create or retrieve user profile');
+    }
 
     return {
       id: profile.id,
@@ -113,9 +147,9 @@ export const authService = {
       .from('users')
       .select('*')
       .eq('id', authUser.id)
-      .single();
+      .maybeSingle();
 
-    if (error) return null;
+    if (error || !profile) return null;
 
     return {
       id: profile.id,

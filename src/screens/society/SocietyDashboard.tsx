@@ -161,7 +161,7 @@ export const SocietyDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
     colors: string[]
   ) => (
     <Animatable.View animation="fadeInUp" duration={800} style={styles.statCard}>
-      <LinearGradient colors={colors} style={styles.statGradient}>
+      <LinearGradient colors={colors as any} style={styles.statGradient}>
         <Ionicons name={icon as any} size={32} color="rgba(255, 255, 255, 0.9)" />
         <Text style={styles.statValue}>{value}</Text>
         <Text style={styles.statTitle}>{title}</Text>
@@ -282,7 +282,7 @@ export const SocietyDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
     <>
       {/* Header with Society Badge */}
       <LinearGradient
-        colors={societyColor.gradient}
+        colors={societyColor.gradient as any}
         style={styles.header}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
