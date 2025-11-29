@@ -29,6 +29,7 @@ CREATE TABLE events (
   society TEXT NOT NULL CHECK (society IN ('ACM', 'CLS', 'CSS')),
   category TEXT NOT NULL,
   capacity INTEGER NOT NULL,
+  image_url TEXT,
   registered_students TEXT[] DEFAULT '{}',
   created_by UUID REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW(),

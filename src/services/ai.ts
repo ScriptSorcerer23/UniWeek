@@ -2,6 +2,19 @@ import { eventService } from './events';
 import { Event, EventCategory, SocietyType } from '../types';
 import { supabase } from './supabase';
 
+// Groq Llama 70B Integration
+// TODO: Replace 'YOUR_GROQ_API_KEY_HERE' with your actual Groq API key from https://console.groq.com
+const GROQ_API_KEY = process.env.GROQ_API_KEY || 'YOUR_GROQ_API_KEY_HERE';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+interface GroqResponse {
+  choices: Array<{
+    message: {
+      content: string;
+    };
+  }>;
+}
+
 export interface AIRecommendation {
   eventId: string;
   score: number;
@@ -34,98 +47,151 @@ export interface FeedbackSentiment {
 
 export const aiService = {
   /**
-   * Get personalized event recommendations for students
+   * Call Groq Llama 70B API for advanced AI processing
+   */
+  async callGroqAPI(prompt: string, systemPrompt: string = ''): Promise<string> {
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-70b-versatile',
+          messages: [
+            ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.7,
+          max_tokens: 1000,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Groq API error: ${response.status}`);
+      }
+
+      const data: GroqResponse = await response.json();
+      return data.choices[0]?.message?.content || '';
+    } catch (error) {
+      console.error('Groq API call failed:', error);
+      return '';
+    }
+  },
+
+  /**
+   * Get personalized event recommendations for students using AI
    */
   async getEventRecommendations(params: EventRecommendationParams): Promise<AIRecommendation[]> {
     const { userId, limit = 5 } = params;
 
-    // Get user's registration history
-    const userEvents = await eventService.getUserRegisteredEvents(userId);
-    const upcomingEvents = await eventService.getEvents();
+    try {
+      // Get user's registration history and upcoming events
+      const userEvents = await eventService.getUserRegisteredEvents(userId);
+      const upcomingEvents = await eventService.getEvents();
 
-    // Get user's past registration patterns
-    const { data: registrations, error: regError } = await supabase
-      .from('registrations')
-      .select(`
-        *,
-        events(society, category, title)
-      `)
-      .eq('user_id', userId);
+      // Get user's past registration patterns with ratings
+      const { data: registrations, error: regError } = await supabase
+        .from('registrations')
+        .select(`
+          *,
+          events(society, category, title)
+        `)
+        .eq('user_id', userId);
 
-    if (regError) throw regError;
-
-    // Analyze user preferences
-    const categoryPreferences = this.calculateCategoryPreferences(registrations || []);
-    const societyPreferences = this.calculateSocietyPreferences(registrations || []);
-
-    // Score upcoming events
-    const recommendations: AIRecommendation[] = [];
-
-    for (const event of upcomingEvents) {
-      // Skip if user is already registered
-      if (event.registeredStudents.includes(userId)) continue;
-
-      // Skip past events
-      if (event.date < new Date()) continue;
-
-      let score = 0;
-      let reason = '';
-
-      // Category preference scoring (40% weight)
-      const categoryScore = categoryPreferences[event.category] || 0;
-      score += categoryScore * 0.4;
-      
-      if (categoryScore > 0.5) {
-        reason += `You've shown interest in ${event.category} events. `;
+      if (regError) {
+        console.error('Error fetching user registrations:', regError);
+        return [];
       }
 
-      // Society preference scoring (30% weight)
-      const societyScore = societyPreferences[event.society] || 0;
-      score += societyScore * 0.3;
-      
-      if (societyScore > 0.5) {
-        reason += `You frequently attend ${event.society} events. `;
+      // Filter available events (not registered + upcoming)
+      const availableEvents = upcomingEvents.filter(event => 
+        !userEvents.some(ue => ue.id === event.id) && 
+        new Date(event.date) > new Date()
+      );
+
+      // Use AI for advanced recommendations if user has history
+      const userHistory = registrations?.map(reg => 
+        `${reg.events?.title} (${reg.events?.category}, ${reg.events?.society}) - Rating: ${reg.rating || 'N/A'}`
+      ).join(', ') || '';
+
+      if (userHistory && availableEvents.length > 0) {
+        const eventsList = availableEvents.map((event, idx) => 
+          `${idx + 1}. ${event.title} - ${event.category} by ${event.society}`
+        ).join('\\n');
+
+        const systemPrompt = `You are an AI assistant for university event recommendations. Analyze user preferences and recommend relevant events.`;
+        
+        const prompt = `User's event history: ${userHistory}
+
+Available events:
+${eventsList}
+
+Recommend the top ${limit} events. Return only numbers separated by commas (e.g., 1,3,5).`;
+
+        const aiResponse = await this.callGroqAPI(prompt, systemPrompt);
+        
+        // Parse AI response
+        const recommendedIndices = aiResponse
+          .split(',')
+          .map(s => parseInt(s.trim()) - 1)
+          .filter(i => i >= 0 && i < availableEvents.length)
+          .slice(0, limit);
+
+        if (recommendedIndices.length > 0) {
+          return recommendedIndices.map((i, index) => ({
+            eventId: availableEvents[i].id,
+            score: (recommendedIndices.length - index) * 20,
+            reason: `AI-recommended based on your preferences`,
+            event: availableEvents[i]
+          }));
+        }
       }
 
-      // Popularity scoring (20% weight) - events with good registration rates
-      const capacityFillRate = event.registeredStudents.length / event.capacity;
-      if (capacityFillRate > 0.3 && capacityFillRate < 0.8) {
-        score += 0.2;
-        reason += 'This event has good attendance but still has space. ';
-      }
+      // Fallback to algorithm-based recommendations
+      return this.getFallbackRecommendations(userId, availableEvents, registrations || []);
 
-      // Diversity bonus (10% weight) - encourage trying new societies/categories
-      if (!userEvents.some(ue => ue.society === event.society)) {
-        score += 0.1;
-        reason += `Try something new with ${event.society}! `;
-      }
-
-      if (score > 0.1) {
-        recommendations.push({
-          eventId: event.id,
-          score,
-          reason: reason.trim(),
-          event,
-        });
-      }
+    } catch (error) {
+      console.error('AI recommendation failed:', error);
+      return [];
     }
-
-    // Sort by score and limit results
-    return recommendations
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
   },
 
   /**
-   * Calculate category preferences based on user history
+   * Fallback algorithm-based recommendations
    */
-  calculateCategoryPreferences(registrations: any[]): Record<EventCategory, number> {
+  getFallbackRecommendations(userId: string, events: Event[], registrations: any[]): AIRecommendation[] {
+    const categoryPrefs = this.calculateCategoryPreferences(registrations);
+    const recommendations: AIRecommendation[] = [];
+
+    for (const event of events) {
+      let score = 50; // Base score
+      const categoryScore = categoryPrefs[event.category] || 0;
+      score += categoryScore * 30;
+
+      recommendations.push({
+        eventId: event.id,
+        score,
+        reason: 'Recommended for you',
+        event
+      });
+    }
+
+    return recommendations
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+  },
+
+  /**
+   * Calculate category preferences from user history
+   */
+  calculateCategoryPreferences(registrations: any[]): Record<string, number> {
     const preferences: Record<string, number> = {};
     const total = registrations.length;
 
-    if (total === 0) return preferences as Record<EventCategory, number>;
+    if (total === 0) return preferences;
 
-    // Count category occurrences
     for (const reg of registrations) {
       const category = reg.events?.category;
       if (category) {
@@ -134,391 +200,205 @@ export const aiService = {
     }
 
     // Normalize to 0-1 scale
-    Object.keys(preferences).forEach(category => {
+    for (const category in preferences) {
       preferences[category] = preferences[category] / total;
-    });
-
-    return preferences as Record<EventCategory, number>;
-  },
-
-  /**
-   * Calculate society preferences based on user history
-   */
-  calculateSocietyPreferences(registrations: any[]): Record<SocietyType, number> {
-    const preferences: Record<string, number> = {};
-    const total = registrations.length;
-
-    if (total === 0) return preferences as Record<SocietyType, number>;
-
-    // Count society occurrences
-    for (const reg of registrations) {
-      const society = reg.events?.society;
-      if (society) {
-        preferences[society] = (preferences[society] || 0) + 1;
-      }
     }
 
-    // Normalize to 0-1 scale
-    Object.keys(preferences).forEach(society => {
-      preferences[society] = preferences[society] / total;
-    });
-
-    return preferences as Record<SocietyType, number>;
+    return preferences;
   },
 
   /**
-   * Analyze feedback sentiment for events
+   * AI-powered event category suggestion using Groq
    */
-  async analyzeFeedbackSentiment(eventId: string): Promise<FeedbackSentiment> {
-    const { data: feedbacks, error } = await supabase
-      .from('registrations')
-      .select('rating, feedback')
-      .eq('event_id', eventId)
-      .not('rating', 'is', null);
+  async suggestEventCategory(title: string, description: string): Promise<EventCategory> {
+    try {
+      const systemPrompt = `You are an expert at categorizing university events. Available categories: Technical, Cultural, Sports, Workshop, Competition, Other.`;
+      
+      const prompt = `Categorize this event:
+Title: ${title}
+Description: ${description}
 
-    if (error) throw error;
+Return only the category name: Technical, Cultural, Sports, Workshop, Competition, or Other`;
 
-    const feedbackData = feedbacks || [];
+      const aiResponse = await this.callGroqAPI(prompt, systemPrompt);
+      
+      const validCategories: EventCategory[] = ['Technical', 'Cultural', 'Sports', 'Workshop', 'Competition', 'Other'];
+      const suggested = aiResponse.trim() as EventCategory;
+      
+      if (validCategories.includes(suggested)) {
+        return suggested;
+      }
+    } catch (error) {
+      console.error('AI category suggestion failed:', error);
+    }
+
+    // Fallback to keyword matching
+    return this.getFallbackCategory(title, description);
+  },
+
+  /**
+   * Fallback category suggestion using keywords
+   */
+  getFallbackCategory(title: string, description: string): EventCategory {
+    const text = (title + ' ' + description).toLowerCase();
+    const categories = {
+      Technical: ['code', 'programming', 'tech', 'software', 'web', 'app', 'ai', 'hackathon'],
+      Cultural: ['cultural', 'art', 'music', 'dance', 'drama', 'poetry', 'literature', 'debate'],
+      Sports: ['sports', 'cricket', 'football', 'basketball', 'tournament', 'match'],
+      Workshop: ['workshop', 'training', 'learn', 'hands-on', 'tutorial', 'session'],
+      Competition: ['competition', 'contest', 'challenge', 'quiz', 'championship']
+    };
+
+    for (const [category, keywords] of Object.entries(categories)) {
+      if (keywords.some(keyword => text.includes(keyword))) {
+        return category as EventCategory;
+      }
+    }
     
-    if (feedbackData.length === 0) {
+    return 'Other';
+  },
+
+  /**
+   * Advanced feedback sentiment analysis using Groq AI
+   */
+  async analyzeFeedbackSentiment(feedbacks: string[], eventId: string): Promise<FeedbackSentiment> {
+    if (feedbacks.length === 0) {
       return {
         eventId,
         averageRating: 0,
         sentiment: 'neutral',
         keyTopics: [],
         summary: 'No feedback available',
-        suggestions: [],
+        suggestions: []
       };
     }
 
-    // Calculate average rating
-    const averageRating = feedbackData.reduce((sum, f) => sum + f.rating, 0) / feedbackData.length;
+    try {
+      const feedbackText = feedbacks.join('\\n---\\n');
+      
+      const systemPrompt = `You are an expert at analyzing event feedback. Provide sentiment analysis and actionable insights.`;
+      
+      const prompt = `Analyze this feedback:
+${feedbackText}
 
-    // Determine sentiment based on rating
-    let sentiment: 'positive' | 'neutral' | 'negative';
-    if (averageRating >= 4) sentiment = 'positive';
-    else if (averageRating >= 3) sentiment = 'neutral';
-    else sentiment = 'negative';
+Return JSON:
+{
+  "sentiment": "positive|neutral|negative",
+  "keyTopics": ["topic1", "topic2"],
+  "summary": "brief summary",
+  "suggestions": ["suggestion1", "suggestion2"]
+}`;
 
-    // Analyze text feedback (simplified keyword extraction)
-    const allFeedback = feedbackData
-      .filter(f => f.feedback)
-      .map(f => f.feedback.toLowerCase())
-      .join(' ');
+      const aiResponse = await this.callGroqAPI(prompt, systemPrompt);
+      
+      try {
+        const analysis = JSON.parse(aiResponse);
+        
+        // Get average rating from database
+        const { data: ratings } = await supabase
+          .from('registrations')
+          .select('rating')
+          .eq('event_id', eventId)
+          .not('rating', 'is', null);
 
-    const keyTopics = this.extractKeyTopics(allFeedback);
-    const summary = this.generateFeedbackSummary(averageRating, feedbackData.length, sentiment);
-    const suggestions = this.generateImprovementSuggestions(sentiment, keyTopics, averageRating);
+        const avgRating = ratings && ratings.length > 0 
+          ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length 
+          : 0;
+
+        return {
+          eventId,
+          averageRating: Number(avgRating.toFixed(1)),
+          sentiment: analysis.sentiment || 'neutral',
+          keyTopics: analysis.keyTopics || [],
+          summary: analysis.summary || 'Analysis complete',
+          suggestions: analysis.suggestions || []
+        };
+      } catch (parseError) {
+        console.error('Failed to parse AI sentiment response:', parseError);
+      }
+    } catch (error) {
+      console.error('AI sentiment analysis failed:', error);
+    }
+
+    // Fallback to simple sentiment analysis
+    return this.getFallbackSentiment(feedbacks, eventId);
+  },
+
+  /**
+   * Fallback sentiment analysis
+   */
+  async getFallbackSentiment(feedbacks: string[], eventId: string): Promise<FeedbackSentiment> {
+    const positiveWords = ['great', 'excellent', 'amazing', 'good', 'love', 'awesome'];
+    const negativeWords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'worst'];
+
+    let positiveCount = 0;
+    let negativeCount = 0;
+
+    for (const feedback of feedbacks) {
+      const text = feedback.toLowerCase();
+      const hasPositive = positiveWords.some(word => text.includes(word));
+      const hasNegative = negativeWords.some(word => text.includes(word));
+
+      if (hasPositive && !hasNegative) positiveCount++;
+      else if (hasNegative && !hasPositive) negativeCount++;
+    }
+
+    let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral';
+    if (positiveCount > negativeCount) sentiment = 'positive';
+    else if (negativeCount > positiveCount) sentiment = 'negative';
+
+    // Get average rating
+    const { data: ratings } = await supabase
+      .from('registrations')
+      .select('rating')
+      .eq('event_id', eventId)
+      .not('rating', 'is', null);
+
+    const avgRating = ratings && ratings.length > 0 
+      ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length 
+      : 0;
 
     return {
       eventId,
-      averageRating: Math.round(averageRating * 10) / 10,
+      averageRating: Number(avgRating.toFixed(1)),
       sentiment,
-      keyTopics,
-      summary,
-      suggestions,
+      keyTopics: ['General feedback'],
+      summary: `${Math.round((positiveCount / feedbacks.length) * 100)}% positive feedback`,
+      suggestions: ['Continue current approach']
     };
   },
 
   /**
-   * Extract key topics from feedback text
+   * Generate analytics insights using AI
    */
-  extractKeyTopics(text: string): string[] {
-    if (!text) return [];
+  async generateAnalyticsInsights(analyticsData: any): Promise<AIInsight[]> {
+    try {
+      const systemPrompt = `You are a data analyst for university events. Provide actionable insights.`;
+      
+      const prompt = `Analyze this data and provide 3 key insights:
+${JSON.stringify(analyticsData, null, 2)}
 
-    // Common positive and negative keywords
-    const positiveKeywords = ['excellent', 'great', 'amazing', 'good', 'helpful', 'informative', 'engaging', 'fun'];
-    const negativeKeywords = ['bad', 'boring', 'unclear', 'confusing', 'poor', 'disappointing', 'waste'];
-    const topicKeywords = ['presentation', 'speaker', 'venue', 'organization', 'timing', 'content', 'food', 'networking'];
+Return JSON array:
+[{"type": "trend", "title": "Title", "description": "Description"}]`;
 
-    const foundTopics: string[] = [];
-    const words = text.split(/\s+/);
-
-    // Find relevant keywords
-    [...positiveKeywords, ...negativeKeywords, ...topicKeywords].forEach(keyword => {
-      if (words.some(word => word.includes(keyword)) && !foundTopics.includes(keyword)) {
-        foundTopics.push(keyword);
+      const aiResponse = await this.callGroqAPI(prompt, systemPrompt);
+      
+      try {
+        const insights = JSON.parse(aiResponse);
+        return Array.isArray(insights) ? insights : [];
+      } catch (parseError) {
+        console.error('Failed to parse AI insights:', parseError);
       }
-    });
-
-    return foundTopics.slice(0, 5); // Return top 5 topics
-  },
-
-  /**
-   * Generate feedback summary
-   */
-  generateFeedbackSummary(averageRating: number, totalFeedbacks: number, sentiment: string): string {
-    if (sentiment === 'positive') {
-      return `Event received excellent feedback with ${averageRating.toFixed(1)}/5 stars from ${totalFeedbacks} participants. Most attendees had a positive experience.`;
-    } else if (sentiment === 'neutral') {
-      return `Event received mixed feedback with ${averageRating.toFixed(1)}/5 stars from ${totalFeedbacks} participants. There's room for improvement.`;
-    } else {
-      return `Event needs improvement with ${averageRating.toFixed(1)}/5 stars from ${totalFeedbacks} participants. Consider addressing participant concerns.`;
-    }
-  },
-
-  /**
-   * Generate improvement suggestions
-   */
-  generateImprovementSuggestions(sentiment: string, keyTopics: string[], averageRating: number): string[] {
-    const suggestions: string[] = [];
-
-    if (sentiment === 'negative' || averageRating < 3) {
-      suggestions.push('Review event planning and organization');
-      suggestions.push('Gather more detailed feedback from participants');
-      suggestions.push('Consider changing venue or timing');
+    } catch (error) {
+      console.error('AI analytics insights failed:', error);
     }
 
-    if (keyTopics.includes('speaker')) {
-      suggestions.push('Improve speaker selection and preparation');
-    }
-
-    if (keyTopics.includes('venue')) {
-      suggestions.push('Consider a better venue with improved facilities');
-    }
-
-    if (keyTopics.includes('timing')) {
-      suggestions.push('Reconsider event timing and duration');
-    }
-
-    if (keyTopics.includes('content')) {
-      suggestions.push('Enhance content quality and relevance');
-    }
-
-    if (sentiment === 'positive') {
-      suggestions.push('Maintain current quality standards');
-      suggestions.push('Consider organizing similar events');
-    }
-
-    return suggestions.slice(0, 4); // Return top 4 suggestions
-  },
-
-  /**
-   * Generate insights for society analytics dashboard
-   */
-  async generateAnalyticsInsights(societyType?: SocietyType, userId?: string): Promise<AIInsight[]> {
-    const analytics = await eventService.getEventAnalytics(societyType, userId);
-    const insights: AIInsight[] = [];
-
-    // Registration trend insight
-    const recentTrends = analytics.registrationTrends.slice(-7);
-    const trendDirection = this.calculateTrendDirection(recentTrends);
-    
-    if (trendDirection !== 'stable') {
-      insights.push({
-        type: 'trend',
-        title: `Registration Trend: ${trendDirection}`,
-        description: trendDirection === 'increasing' 
-          ? 'Event registrations are growing! Your events are gaining popularity.'
-          : 'Registration numbers are declining. Consider reviewing your event strategy.',
-        data: { trend: trendDirection, data: recentTrends }
-      });
-    }
-
-    // Popular event categories
-    const topCategory = analytics.categoryDistribution
-      .sort((a, b) => b.count - a.count)[0];
-    
-    if (topCategory) {
-      insights.push({
+    return [
+      {
         type: 'analysis',
-        title: `Most Popular Category: ${topCategory.category}`,
-        description: `${topCategory.category} events are your most successful with ${topCategory.count} events.`,
-        data: topCategory
-      });
-    }
-
-    // Participation rate analysis
-    const societyParticipation = analytics.participationRates.find(p => p.society === societyType);
-    if (societyParticipation) {
-      const rateCategory = societyParticipation.rate >= 70 ? 'excellent' : 
-                          societyParticipation.rate >= 50 ? 'good' : 'needs improvement';
-      
-      insights.push({
-        type: 'analysis',
-        title: `Participation Rate: ${societyParticipation.rate}%`,
-        description: `Your events have ${rateCategory} attendance rates. ${this.getParticipationAdvice(societyParticipation.rate)}`,
-        data: societyParticipation
-      });
-    }
-
-    // Event recommendations for societies
-    if (analytics.totalEvents > 5) {
-      insights.push({
-        type: 'recommendation',
-        title: 'Event Strategy Recommendation',
-        description: this.generateEventStrategyRecommendation(analytics),
-        data: analytics
-      });
-    }
-
-    return insights;
-  },
-
-  /**
-   * Calculate trend direction from data points
-   */
-  calculateTrendDirection(dataPoints: { date: string; count: number; }[]): 'increasing' | 'decreasing' | 'stable' {
-    if (dataPoints.length < 3) return 'stable';
-
-    const recent = dataPoints.slice(-3).map(d => d.count);
-    const earlier = dataPoints.slice(-6, -3).map(d => d.count);
-
-    const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const earlierAvg = earlier.reduce((a, b) => a + b, 0) / earlier.length;
-
-    const change = ((recentAvg - earlierAvg) / Math.max(earlierAvg, 1)) * 100;
-
-    if (change > 20) return 'increasing';
-    if (change < -20) return 'decreasing';
-    return 'stable';
-  },
-
-  /**
-   * Get participation advice based on rate
-   */
-  getParticipationAdvice(rate: number): string {
-    if (rate >= 70) {
-      return 'Keep up the excellent work!';
-    } else if (rate >= 50) {
-      return 'Consider promoting events more actively to increase attendance.';
-    } else {
-      return 'Review your event marketing strategy and timing to boost participation.';
-    }
-  },
-
-  /**
-   * Generate event strategy recommendation
-   */
-  generateEventStrategyRecommendation(analytics: any): string {
-    const { averageRating } = analytics;
-
-    if (averageRating >= 4.0) {
-      return 'Your events are highly rated! Consider increasing event frequency to meet demand.';
-    } else if (averageRating >= 3.0) {
-      return 'Focus on improving event quality based on participant feedback to boost ratings.';
-    } else {
-      return 'Event quality needs significant improvement. Review feedback and revamp your approach.';
-    }
-  },
-
-  /**
-   * Auto-suggest event category based on title and description
-   */
-  async suggestEventCategory(title: string, description: string): Promise<EventCategory> {
-    const keywords = {
-      'Technical': ['workshop', 'coding', 'hackathon', 'tech', 'ai', 'ml', 'web', 'app', 'software', 'programming', 'development', 'javascript', 'python'],
-      'Cultural': ['music', 'dance', 'art', 'cultural', 'performance', 'show', 'concert', 'drama', 'theater'],
-      'Sports': ['sports', 'cricket', 'football', 'basketball', 'tournament', 'match', 'game', 'athletics', 'competition'],
-      'Workshop': ['workshop', 'training', 'seminar', 'session', 'tutorial', 'learn', 'hands-on'],
-      'Competition': ['competition', 'contest', 'challenge', 'hackathon', 'quiz', 'debate', 'championship'],
-      'Seminar': ['seminar', 'lecture', 'talk', 'presentation', 'discussion', 'symposium'],
-      'Social': ['meetup', 'networking', 'social', 'gathering', 'mixer', 'party', 'celebration'],
-    };
-
-    const text = `${title} ${description}`.toLowerCase();
-    
-    for (const [category, terms] of Object.entries(keywords)) {
-      if (terms.some((term) => text.includes(term))) {
-        return category as EventCategory;
+        title: 'Analytics Ready',
+        description: 'Your analytics data has been processed successfully.'
       }
-    }
-
-    return 'Other';
-  },
-
-  /**
-   * Get recommended event categories for societies
-   */
-  async getRecommendedCategories(societyType: SocietyType): Promise<EventCategory[]> {
-    // Get all events for this society type
-    const { data: events, error } = await supabase
-      .from('events')
-      .select('category, registered_students, capacity')
-      .eq('society', societyType);
-
-    if (error) throw error;
-
-    // Calculate success rate by category
-    const categoryStats = new Map<EventCategory, { total: number; success: number }>();
-
-    (events || []).forEach((event: any) => {
-      const category = event.category;
-      const fillRate = (event.registered_students?.length || 0) / event.capacity;
-      
-      const stats = categoryStats.get(category) || { total: 0, success: 0 };
-      stats.total += 1;
-      if (fillRate > 0.6) stats.success += 1;
-      
-      categoryStats.set(category, stats);
-    });
-
-    // Get categories with high success rates
-    const recommendations: EventCategory[] = [];
-    categoryStats.forEach((stats, category) => {
-      const successRate = stats.success / stats.total;
-      if (successRate > 0.5 && stats.total >= 2) {
-        recommendations.push(category);
-      }
-    });
-
-    return recommendations;
-  },
-
-  /**
-   * Suggest optimal event timing
-   */
-  async suggestOptimalTiming(societyType: SocietyType): Promise<{
-    bestDaysOfWeek: string[];
-    bestTimeSlots: string[];
-    reasoning: string;
-  }> {
-    // Get successful events for this society
-    const { data: events, error } = await supabase
-      .from('events')
-      .select('date, time, registered_students, capacity')
-      .eq('society', societyType);
-
-    if (error) throw error;
-
-    const successfulEvents = (events || []).filter((event: any) => {
-      const fillRate = (event.registered_students?.length || 0) / event.capacity;
-      return fillRate > 0.6;
-    });
-
-    // Analyze timing patterns
-    const dayAnalysis = new Map<string, number>();
-    const timeAnalysis = new Map<string, number>();
-
-    successfulEvents.forEach((event: any) => {
-      const eventDate = new Date(event.date);
-      const dayOfWeek = eventDate.toLocaleDateString('en-US', { weekday: 'long' });
-      
-      dayAnalysis.set(dayOfWeek, (dayAnalysis.get(dayOfWeek) || 0) + 1);
-      
-      const hour = parseInt(event.time.split(':')[0]);
-      let timeSlot = '';
-      if (hour >= 9 && hour < 12) timeSlot = 'Morning (9-12)';
-      else if (hour >= 12 && hour < 17) timeSlot = 'Afternoon (12-17)';
-      else timeSlot = 'Evening (17-20)';
-      
-      timeAnalysis.set(timeSlot, (timeAnalysis.get(timeSlot) || 0) + 1);
-    });
-
-    const bestDaysOfWeek = Array.from(dayAnalysis.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([day]) => day);
-
-    const bestTimeSlots = Array.from(timeAnalysis.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([slot]) => slot);
-
-    return {
-      bestDaysOfWeek,
-      bestTimeSlots,
-      reasoning: `Based on ${successfulEvents.length} successful ${societyType} events, these timing patterns show the highest attendance rates.`,
-    };
-  },
+    ];
+  }
 };

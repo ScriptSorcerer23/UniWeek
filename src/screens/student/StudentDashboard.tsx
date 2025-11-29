@@ -9,12 +9,14 @@ import {
   RefreshControl,
   Image,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Animatable from 'react-native-animatable';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { aiService, AIRecommendation } from '../../services/ai';
 import { SocietyType, EventCategory } from '../../types';
 
 const { width } = Dimensions.get('window');
@@ -47,14 +49,17 @@ export const StudentDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
   const [events, setEvents] = useState<Event[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
   const [featuredEvents, setFeaturedEvents] = useState<Event[]>([]);
+  const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<FilterType>('All');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingAI, setLoadingAI] = useState(false);
 
   const filters: FilterType[] = ['All', 'ACM', 'CLS', 'CSS', 'Upcoming', 'Past'];
 
   useEffect(() => {
     fetchEvents();
+    fetchAIRecommendations();
 
     // Set up realtime subscription for live event updates
     const channel = supabase
@@ -68,6 +73,7 @@ export const StudentDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
         },
         () => {
           fetchEvents();
+          fetchAIRecommendations();
         }
       )
       .subscribe();
@@ -80,6 +86,22 @@ export const StudentDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
   useEffect(() => {
     applyFilters();
   }, [selectedFilter, events]);
+
+  const fetchAIRecommendations = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      setLoadingAI(true);
+      const recommendations = await aiService.getEventRecommendations({
+        userId: user.id,
+        limit: 3,
+      });
+      setAiRecommendations(recommendations);
+    } catch (error) {
+      console.error('Error fetching AI recommendations:', error);
+    } finally {
+      setLoadingAI(false);
+    }
+  }, [user]);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -384,6 +406,48 @@ export const StudentDashboard: React.FC<{ navigation: any }> = ({ navigation }) 
 
   const ListHeaderComponent = () => (
     <>
+      {/* AI Recommendations Section */}
+      {aiRecommendations.length > 0 && selectedFilter === 'All' && (
+        <Animatable.View animation="fadeInDown" duration={600} style={styles.aiSection}>
+          <View style={styles.aiHeader}>
+            <View style={styles.aiTitleRow}>
+              <Ionicons name="sparkles" size={24} color="#8B5CF6" />
+              <Text style={styles.aiTitle}>AI Recommended For You</Text>
+            </View>
+            {loadingAI && <ActivityIndicator size="small" color="#8B5CF6" />}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.aiScrollContent}>
+            {aiRecommendations.map((rec, index) => (
+              <Animatable.View key={rec.eventId} animation="fadeInRight" delay={index * 100} duration={600}>
+                <TouchableOpacity
+                  style={styles.aiCard}
+                  onPress={() => navigation.navigate('EventDetails', { eventId: rec.eventId })}
+                  activeOpacity={0.9}
+                >
+                  <LinearGradient
+                    colors={['#8B5CF6', '#7C3AED']}
+                    style={styles.aiCardGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <View style={styles.aiScoreBadge}>
+                      <Ionicons name="star" size={12} color="#fff" />
+                      <Text style={styles.aiScoreText}>{Math.round(rec.score)}%</Text>
+                    </View>
+                    <Text style={styles.aiEventTitle} numberOfLines={2}>{rec.event.title}</Text>
+                    <Text style={styles.aiEventReason} numberOfLines={1}>{rec.reason}</Text>
+                    <View style={styles.aiEventMeta}>
+                      <Text style={styles.aiEventSociety}>{rec.event.society}</Text>
+                      <Text style={styles.aiEventCategory}>{rec.event.category}</Text>
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </Animatable.View>
+            ))}
+          </ScrollView>
+        </Animatable.View>
+      )}
+
       {/* Featured Events Section */}
       {featuredEvents.length > 0 && selectedFilter === 'All' && (
         <View style={styles.featuredSection}>
@@ -769,5 +833,94 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  aiSection: {
+    paddingVertical: 20,
+    backgroundColor: '#F5F3FF',
+    marginBottom: 8,
+  },
+  aiHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  aiTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  aiTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#8B5CF6',
+  },
+  aiScrollContent: {
+    paddingLeft: 20,
+    gap: 12,
+  },
+  aiCard: {
+    width: width * 0.65,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  aiCardGradient: {
+    padding: 16,
+    minHeight: 140,
+  },
+  aiScoreBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  aiScoreText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  aiEventTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 6,
+  },
+  aiEventReason: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: 12,
+  },
+  aiEventMeta: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  aiEventSociety: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  aiEventCategory: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
 });

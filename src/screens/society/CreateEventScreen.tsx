@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { aiService } from '../../services/ai';
 import { EventCategory } from '../../types';
 
 const CATEGORIES: EventCategory[] = [
@@ -51,6 +52,7 @@ export const CreateEventScreen: React.FC<{ navigation: any }> = ({ navigation })
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [suggestingCategory, setSuggestingCategory] = useState(false);
 
   const [errors, setErrors] = useState({
     title: '',
@@ -63,6 +65,35 @@ export const CreateEventScreen: React.FC<{ navigation: any }> = ({ navigation })
     ? SOCIETY_COLORS[user.societyType]
     : SOCIETY_COLORS.ACM;
 
+  // Auto-suggest category when title and description change
+  useEffect(() => {
+    if (title.length > 5 && description.length > 20) {
+      suggestCategory();
+    }
+  }, [title, description]);
+
+  const suggestCategory = async () => {
+    if (suggestingCategory) return;
+    try {
+      setSuggestingCategory(true);
+      const suggested = await aiService.suggestEventCategory(title, description);
+      if (suggested && suggested !== category) {
+        Alert.alert(
+          'AI Category Suggestion',
+          `Based on your event details, we suggest "${suggested}" category. Would you like to use it?`,
+          [
+            { text: 'No Thanks', style: 'cancel' },
+            { text: 'Use It', onPress: () => setCategory(suggested) },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Error suggesting category:', error);
+    } finally {
+      setSuggestingCategory(false);
+    }
+  };
+
   const pickImage = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -73,7 +104,7 @@ export const CreateEventScreen: React.FC<{ navigation: any }> = ({ navigation })
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [16, 9],
         quality: 0.8,
@@ -90,27 +121,35 @@ export const CreateEventScreen: React.FC<{ navigation: any }> = ({ navigation })
 
   const uploadImage = async (uri: string): Promise<string | null> => {
     try {
+      const fileExt = uri.split('.').pop() || 'jpg';
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      // Fetch the image and convert to blob
       const response = await fetch(uri);
       const blob = await response.blob();
-      const fileExt = uri.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-      const filePath = `event-posters/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
+      
+      const { data, error } = await supabase.storage
         .from('event-posters')
-        .upload(filePath, blob);
-
-      if (uploadError) {
-        throw uploadError;
+        .upload(filePath, blob, {
+          contentType: `image/${fileExt}`,
+          cacheControl: '3600',
+          upsert: false
+        });
+      
+      if (error) {
+        console.error('Storage upload error:', error);
+        throw error;
       }
-
+      
       const { data: { publicUrl } } = supabase.storage
         .from('event-posters')
         .getPublicUrl(filePath);
-
+      
       return publicUrl;
     } catch (error) {
       console.error('Error uploading image:', error);
+      Alert.alert('Upload Error', 'Failed to upload image. Please try again.');
       return null;
     }
   };

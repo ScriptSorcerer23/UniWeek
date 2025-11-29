@@ -9,27 +9,38 @@ import { EditEventScreen } from '../screens/society/EditEventScreen';
 import { EventRegistrationsScreen } from '../screens/society/EventRegistrationsScreen';
 import { SendNotificationScreen } from '../screens/society/SendNotificationScreen';
 import { AnalyticsDashboard } from '../screens/society/AnalyticsDashboard';
+import { ProfileScreen, SettingsScreen, NotificationsScreen } from '../screens/common';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-// Placeholder screens for now
+// Notifications Stack Navigator
+const NotificationsStack = () => {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="NotificationsInbox" component={NotificationsScreen} />
+    </Stack.Navigator>
+  );
+};
 
-const NotificationsScreen = () => (
-  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-    <Ionicons name="notifications" size={60} color="#ccc" />
-    <Text style={{ marginTop: 16, fontSize: 18, color: '#666' }}>Notifications</Text>
-    <Text style={{ marginTop: 8, fontSize: 14, color: '#999' }}>Coming Soon</Text>
-  </View>
-);
-
-const ProfileScreen = () => (
-  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-    <Ionicons name="person" size={60} color="#ccc" />
-    <Text style={{ marginTop: 16, fontSize: 18, color: '#666' }}>Profile</Text>
-    <Text style={{ marginTop: 8, fontSize: 14, color: '#999' }}>Coming Soon</Text>
-  </View>
-);
+// Profile Stack Navigator
+const ProfileStack = () => {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="ProfileView" component={ProfileScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="NotificationsView" component={NotificationsScreen} />
+    </Stack.Navigator>
+  );
+};
 
 // Home Stack Navigator for Dashboard, Create Event, Edit Event, Registrations, and Send Notification
 const HomeStack = () => {
@@ -41,9 +52,9 @@ const HomeStack = () => {
     >
       <Stack.Screen name="Dashboard" component={SocietyDashboard} />
       <Stack.Screen name="CreateEvent" component={CreateEventScreen} />
-      <Stack.Screen name="EditEvent" component={EditEventScreen} />
-      <Stack.Screen name="EventRegistrations" component={EventRegistrationsScreen} />
-      <Stack.Screen name="SendNotification" component={SendNotificationScreen} />
+      <Stack.Screen name="EditEvent" component={EditEventScreen as any} />
+      <Stack.Screen name="EventRegistrations" component={EventRegistrationsScreen as any} />
+      <Stack.Screen name="SendNotification" component={SendNotificationScreen as any} />
     </Stack.Navigator>
   );
 };
@@ -85,8 +96,8 @@ export const SocietyNavigator: React.FC = () => {
     >
       <Tab.Screen name="Home" component={HomeStack} />
       <Tab.Screen name="Analytics" component={AnalyticsDashboard} />
-      <Tab.Screen name="Notifications" component={NotificationsScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Notifications" component={NotificationsStack} />
+      <Tab.Screen name="Profile" component={ProfileStack} />
     </Tab.Navigator>
   );
 };

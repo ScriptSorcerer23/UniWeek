@@ -8,6 +8,7 @@ import {
   Dimensions,
   Share,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +16,7 @@ import * as Animatable from 'react-native-animatable';
 import { LineChart, BarChart, PieChart } from 'react-native-chart-kit';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { aiService, FeedbackSentiment } from '../../services/ai';
 
 const { width } = Dimensions.get('window');
 
@@ -49,6 +51,8 @@ export const AnalyticsDashboard: React.FC<{ navigation: any }> = ({ navigation }
     attendanceRate: 0,
     topRatedEvents: [],
   });
+  const [sentimentData, setSentimentData] = useState<FeedbackSentiment[]>([]);
+  const [loadingAI, setLoadingAI] = useState(false);
 
   const societyColor = user?.societyType
     ? SOCIETY_COLORS[user.societyType]
@@ -185,6 +189,9 @@ export const AnalyticsDashboard: React.FC<{ navigation: any }> = ({ navigation }
         attendanceRate,
         topRatedEvents: eventsWithRatings,
       });
+
+      // Fetch AI sentiment analysis for top events
+      fetchSentimentAnalysis(events, registrations || []);
     } catch (error: any) {
       console.error('Error fetching analytics:', error);
       Alert.alert('Error', 'Failed to load analytics data');
@@ -192,6 +199,35 @@ export const AnalyticsDashboard: React.FC<{ navigation: any }> = ({ navigation }
       setLoading(false);
     }
   }, [user]);
+
+  const fetchSentimentAnalysis = async (events: any[], registrations: any[]) => {
+    try {
+      setLoadingAI(true);
+      const sentiments: FeedbackSentiment[] = [];
+      
+      // Analyze top 3 events with feedback
+      const eventsWithFeedback = events
+        .map(event => ({
+          event,
+          feedbacks: registrations
+            .filter(r => r.event_id === event.id && r.feedback)
+            .map(r => r.feedback)
+        }))
+        .filter(e => e.feedbacks.length > 0)
+        .slice(0, 3);
+
+      for (const { event, feedbacks } of eventsWithFeedback) {
+        const sentiment = await aiService.analyzeFeedbackSentiment(feedbacks, event.id);
+        sentiments.push(sentiment);
+      }
+
+      setSentimentData(sentiments);
+    } catch (error) {
+      console.error('Error fetching sentiment analysis:', error);
+    } finally {
+      setLoadingAI(false);
+    }
+  };
 
   const exportReport = async () => {
     try {
@@ -475,6 +511,72 @@ ${analytics.topRatedEvents
           </Animatable.View>
         )}
 
+        {/* AI Sentiment Analysis */}
+        {sentimentData.length > 0 && (
+          <Animatable.View animation="fadeInUp" delay={700} duration={600} style={styles.chartCard}>
+            <View style={styles.chartHeader}>
+              <Ionicons name="sparkles" size={24} color="#8B5CF6" />
+              <Text style={styles.chartTitle}>AI Sentiment Analysis</Text>
+              {loadingAI && <ActivityIndicator size="small" color="#8B5CF6" style={{ marginLeft: 8 }} />}
+            </View>
+            
+            {sentimentData.map((sentiment, index) => {
+              const getSentimentColor = () => {
+                if (sentiment.sentiment === 'positive') return '#10B981';
+                if (sentiment.sentiment === 'negative') return '#EF4444';
+                return '#F59E0B';
+              };
+              const getSentimentIcon = () => {
+                if (sentiment.sentiment === 'positive') return 'happy-outline';
+                if (sentiment.sentiment === 'negative') return 'sad-outline';
+                return 'remove-circle-outline';
+              };
+
+              return (
+                <View key={sentiment.eventId} style={styles.sentimentCard}>
+                  <View style={styles.sentimentHeader}>
+                    <View style={[styles.sentimentBadge, { backgroundColor: getSentimentColor() }]}>
+                      <Ionicons name={getSentimentIcon()} size={20} color="#fff" />
+                      <Text style={styles.sentimentLabel}>{sentiment.sentiment.toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.sentimentRating}>
+                      <Ionicons name="star" size={16} color="#F59E0B" />
+                      <Text style={styles.sentimentRatingText}>{sentiment.averageRating.toFixed(1)}/5</Text>
+                    </View>
+                  </View>
+                  
+                  <Text style={styles.sentimentSummary}>{sentiment.summary}</Text>
+                  
+                  {sentiment.keyTopics.length > 0 && (
+                    <View style={styles.topicsContainer}>
+                      <Text style={styles.topicsLabel}>Key Topics:</Text>
+                      <View style={styles.topicTags}>
+                        {sentiment.keyTopics.map((topic, i) => (
+                          <View key={i} style={styles.topicTag}>
+                            <Text style={styles.topicText}>{topic}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+                  
+                  {sentiment.suggestions.length > 0 && (
+                    <View style={styles.suggestionsContainer}>
+                      <Text style={styles.suggestionsLabel}>AI Suggestions:</Text>
+                      {sentiment.suggestions.map((suggestion, i) => (
+                        <View key={i} style={styles.suggestionRow}>
+                          <Ionicons name="bulb-outline" size={14} color="#8B5CF6" />
+                          <Text style={styles.suggestionText}>{suggestion}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </Animatable.View>
+        )}
+
         {/* Empty State */}
         {analytics.topEvents.length === 0 && (
           <Animatable.View animation="fadeIn" style={styles.emptyContainer}>
@@ -687,5 +789,93 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 40,
+  },
+  sentimentCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#8B5CF6',
+  },
+  sentimentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sentimentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  sentimentLabel: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  sentimentRating: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  sentimentRatingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  sentimentSummary: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  topicsContainer: {
+    marginBottom: 12,
+  },
+  topicsLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  topicTags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  topicTag: {
+    backgroundColor: '#E0E7FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  topicText: {
+    fontSize: 12,
+    color: '#4F46E5',
+    fontWeight: '500',
+  },
+  suggestionsContainer: {
+    gap: 6,
+  },
+  suggestionsLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  suggestionText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
   },
 });
