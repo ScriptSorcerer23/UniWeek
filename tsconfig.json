@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "lib": ["ES2017", "DOM"],
+    "jsx": "react-native",
+    "skipLibCheck": true,
+    "target": "esnext",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
