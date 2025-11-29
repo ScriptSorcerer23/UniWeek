@@ -26,6 +26,7 @@ export interface Event {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  coverImageUrl?: string;
 }
 
 export interface Registration {
@@ -63,11 +64,35 @@ export interface AuthContextType {
 
 export interface EventContextType {
   events: Event[];
+  userRegisteredEvents: Event[];
   loading: boolean;
-  fetchEvents: () => Promise<void>;
-  createEvent: (event: Omit<Event, 'id' | 'createdAt' | 'updatedAt' | 'registeredStudents'>) => Promise<void>;
-  updateEvent: (id: string, event: Partial<Event>) => Promise<void>;
-  deleteEvent: (id: string) => Promise<void>;
+  error: string | null;
+  
+  // Event management
+  fetchEvents: (filters?: any) => Promise<void>;
+  createEvent: (eventData: any) => Promise<Event>;
+  updateEvent: (eventId: string, updates: any) => Promise<Event>;
+  deleteEvent: (eventId: string) => Promise<void>;
+  getEventById: (eventId: string) => Promise<Event | null>;
+  
+  // Registration management
   registerForEvent: (eventId: string) => Promise<void>;
   unregisterFromEvent: (eventId: string) => Promise<void>;
+  isUserRegistered: (eventId: string) => Promise<boolean>;
+  fetchUserRegisteredEvents: () => Promise<void>;
+  
+  // Filtering and search
+  searchEvents: (searchQuery: string) => Promise<Event[]>;
+  filterEvents: (filters: any) => Promise<Event[]>;
+  
+  // Analytics
+  getEventAnalytics: (societyType?: SocietyType, userId?: string) => Promise<any>;
+  getEventCapacityInfo: (eventId: string) => Promise<any>;
+  
+  // Feedback
+  submitEventFeedback: (eventId: string, rating: number, feedback?: string) => Promise<void>;
+  
+  // Utility methods
+  refreshData: () => Promise<void>;
+  clearError: () => void;
 }
