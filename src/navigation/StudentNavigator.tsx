@@ -14,12 +14,12 @@ const DashboardStack = () => (
     <Stack.Screen 
       name="Dashboard" 
       component={StudentDashboard}
-      options={{ title: 'Browse Events' }}
+      options={{ headerShown: false }}
     />
     <Stack.Screen 
       name="EventDetails" 
       component={EventDetails}
-      options={{ title: 'Event Details' }}
+      options={{ headerShown: false }}
     />
   </Stack.Navigator>
 );
