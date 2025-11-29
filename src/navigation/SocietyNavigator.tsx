@@ -41,9 +41,9 @@ const HomeStack = () => {
     >
       <Stack.Screen name="Dashboard" component={SocietyDashboard} />
       <Stack.Screen name="CreateEvent" component={CreateEventScreen} />
-      <Stack.Screen name="EditEvent" component={EditEventScreen} />
-      <Stack.Screen name="EventRegistrations" component={EventRegistrationsScreen} />
-      <Stack.Screen name="SendNotification" component={SendNotificationScreen} />
+      <Stack.Screen name="EditEvent" component={EditEventScreen as any} />
+      <Stack.Screen name="EventRegistrations" component={EventRegistrationsScreen as any} />
+      <Stack.Screen name="SendNotification" component={SendNotificationScreen as any} />
     </Stack.Navigator>
   );
 };
