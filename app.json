@@ -33,15 +33,7 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/notification-icon.png",
-          "color": "#ffffff"
-        }
-      ]
-    ],
+    "plugins": [],
     "experiments": {
       "typedRoutes": false
     }

@@ -8,6 +8,8 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
@@ -71,7 +73,7 @@ export const notificationService = {
         body: `${eventTitle} is tomorrow!`,
         data: { eventId },
       },
-      trigger: reminderDate,
+      trigger: null, // Schedule for immediate delivery
     });
 
     return notificationId;

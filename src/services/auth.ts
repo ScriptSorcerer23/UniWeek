@@ -16,12 +16,24 @@ export const authService = {
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          name,
+          role,
+          society_type: societyType,
+        }
+      }
     });
 
     if (authError) throw authError;
     if (!authData.user) throw new Error('Failed to create user');
 
-    // Create user profile
+    // If email confirmation is required, return a partial user object
+    if (!authData.session) {
+      throw new Error('Please check your email and click the confirmation link to complete your signup.');
+    }
+
+    // Create user profile (only if session exists)
     const userProfile = {
       id: authData.user.id,
       email,
