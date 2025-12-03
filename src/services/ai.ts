@@ -3,8 +3,8 @@ import { Event, EventCategory, SocietyType } from '../types';
 import { supabase } from './supabase';
 
 // Groq Llama 70B Integration
-// TODO: Replace 'YOUR_GROQ_API_KEY_HERE' with your actual Groq API key from https://console.groq.com
-const GROQ_API_KEY = process.env.GROQ_API_KEY || 'YOUR_GROQ_API_KEY_HERE';
+// Set GROQ_API_KEY environment variable in .env file
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 interface GroqResponse {
