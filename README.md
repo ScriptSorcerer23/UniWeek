@@ -44,7 +44,6 @@ A comprehensive mobile application for university Student Week where societies (
 ### 1. Clone and Install Dependencies
 
 ```bash
-cd "e:\\University\\VISIO SPARK"
 npm install
 ```
 
@@ -79,7 +78,6 @@ This will create:
 ### 4. Install Additional Dependencies
 
 If using a physical device, install the Expo Go app:
-- [iOS App Store](https://apps.apple.com/app/expo-go/id982107779)
 - [Google Play Store](https://play.google.com/store/apps/details?id=host.exp.exponent)
 
 ## 🚀 Running the App
@@ -101,12 +99,7 @@ This will open Expo DevTools. You can then:
 # Android
 npm run android
 
-# iOS
-npm run ios
 
-# Web
-npm run web
-```
 
 ## 📁 Project Structure
 
@@ -231,7 +224,7 @@ expo start -c
 
 ## 📄 License
 
-This project is created for educational purposes as part of a university course.
+This project is created for educational purposes as part of a university mobile app dev competition.
 
 ## 👥 Team
 
