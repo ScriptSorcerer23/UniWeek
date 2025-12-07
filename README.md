@@ -2,6 +2,8 @@
 
 A comprehensive mobile application for university Student Week where societies (ACM, CLS, CSS) can create and manage events, and students can browse, register, and provide feedback.
 
+Demo: https://igit.me/UniWeek
+
 ## 🚀 Features
 
 ### For Students
