@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
 import { Event, Registration, EventCategory, SocietyType } from '../types';
+import { storageService } from './storage';
+import * as ImagePicker from 'expo-image-picker';
 
 export interface CreateEventData {
   title: string;
@@ -42,6 +44,56 @@ export interface RegistrationWithUser extends Registration {
 }
 
 export const eventService = {
+  /**
+   * Pick and upload an event cover image
+   * Returns the public URL to be saved with the event
+   */
+  async pickAndUploadEventImage(eventId: string): Promise<string | null> {
+    try {
+      // Request permissions
+      const hasPermission = await storageService.requestPermissions();
+      if (!hasPermission) {
+        throw new Error('Camera and media library permissions are required');
+      }
+
+      // Pick image
+      const image = await storageService.pickImage();
+      if (!image) return null;
+
+      // Upload image
+      const result = await storageService.uploadEventImage(image.uri, eventId);
+      return result.url;
+    } catch (error) {
+      console.error('Error picking and uploading image:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Take and upload an event cover photo
+   * Returns the public URL to be saved with the event
+   */
+  async takeAndUploadEventPhoto(eventId: string): Promise<string | null> {
+    try {
+      // Request permissions
+      const hasPermission = await storageService.requestPermissions();
+      if (!hasPermission) {
+        throw new Error('Camera permissions are required');
+      }
+
+      // Take photo
+      const photo = await storageService.takePhoto();
+      if (!photo) return null;
+
+      // Upload photo
+      const result = await storageService.uploadEventImage(photo.uri, eventId);
+      return result.url;
+    } catch (error) {
+      console.error('Error taking and uploading photo:', error);
+      throw error;
+    }
+  },
+
   /**
    * Get all events with optional filters and search
    */
@@ -201,6 +253,17 @@ export const eventService = {
    * Update existing event (Society handlers only, own events)
    */
   async updateEvent(eventId: string, updates: UpdateEventData, userId: string): Promise<Event> {
+    // If updating image, delete the old one first
+    if (updates.coverImageUrl) {
+      const existingEvent = await this.getEventById(eventId);
+      if (existingEvent?.coverImageUrl) {
+        const oldPath = storageService.extractPathFromUrl(existingEvent.coverImageUrl);
+        if (oldPath) {
+          await storageService.deleteEventImage(oldPath);
+        }
+      }
+    }
+
     const updateRecord: any = {
       updated_at: new Date().toISOString(),
     };
@@ -246,7 +309,16 @@ export const eventService = {
    * Delete event (Society handlers only, own events)
    */
   async deleteEvent(eventId: string, userId: string): Promise<void> {
-    // First delete all registrations for this event
+    // Delete the event image from storage first
+    const event = await this.getEventById(eventId);
+    if (event?.coverImageUrl) {
+      const imagePath = storageService.extractPathFromUrl(event.coverImageUrl);
+      if (imagePath) {
+        await storageService.deleteEventImage(imagePath);
+      }
+    }
+
+    // Delete all registrations for this event
     const { error: regError } = await supabase
       .from('registrations')
       .delete()
@@ -558,185 +630,3 @@ export const eventService = {
    */
   async searchEvents(searchQuery: string): Promise<Event[]> {
     const { data, error } = await supabase
-      .from('events')
-      .select('*')
-      .or(`title.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%,venue.ilike.%${searchQuery}%`)
-      .order('date', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((event: any) => ({
-      id: event.id,
-      title: event.title,
-      description: event.description,
-      date: new Date(event.date + 'T' + event.time),
-      time: event.time,
-      venue: event.venue,
-      society: event.society,
-      category: event.category,
-      capacity: event.capacity,
-      registeredStudents: event.registered_students || [],
-      createdBy: event.created_by,
-      createdAt: new Date(event.created_at),
-      updatedAt: new Date(event.updated_at),
-      coverImageUrl: event.cover_image_url,
-    }));
-  },
-
-  /**
-   * Get event capacity info
-   */
-  async getEventCapacityInfo(eventId: string): Promise<{
-    capacity: number;
-    registered: number;
-    available: number;
-    percentage: number;
-  }> {
-    const event = await this.getEventById(eventId);
-    if (!event) throw new Error('Event not found');
-
-    const registered = event.registeredStudents.length;
-    const available = event.capacity - registered;
-    const percentage = Math.round((registered / event.capacity) * 100);
-
-    return {
-      capacity: event.capacity,
-      registered,
-      available,
-      percentage,
-    };
-  },
-
-  /**
-   * Unregister student from event
-   */
-  async unregisterFromEvent(eventId: string, userId: string): Promise<void> {
-    // Delete registration record
-    const { error: deleteError } = await supabase
-      .from('registrations')
-      .delete()
-      .eq('user_id', userId)
-      .eq('event_id', eventId);
-
-    if (deleteError) throw deleteError;
-
-    // Update event's registered_students array
-    const event = await this.getEventById(eventId);
-    if (event) {
-      const updatedStudents = event.registeredStudents.filter(id => id !== userId);
-      const { error: updateError } = await supabase
-        .from('events')
-        .update({ 
-          registered_students: updatedStudents,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', eventId);
-
-      if (updateError) throw updateError;
-    }
-  },
-
-  /**
-   * Get user's registered events (past and upcoming)
-   */
-  async getUserRegisteredEvents(userId: string): Promise<Event[]> {
-    const { data: registrations, error: regError } = await supabase
-      .from('registrations')
-      .select('event_id')
-      .eq('user_id', userId);
-
-    if (regError) throw regError;
-
-    if (!registrations || registrations.length === 0) return [];
-
-    const eventIds = registrations.map((reg: any) => reg.event_id);
-    
-    const { data: events, error: eventsError } = await supabase
-      .from('events')
-      .select('*')
-      .in('id', eventIds)
-      .order('date', { ascending: true });
-
-    if (eventsError) throw eventsError;
-
-    return (events || []).map((event: any) => ({
-      id: event.id,
-      title: event.title,
-      description: event.description,
-      date: new Date(event.date + 'T' + event.time),
-      time: event.time,
-      venue: event.venue,
-      society: event.society,
-      category: event.category,
-      capacity: event.capacity,
-      registeredStudents: event.registered_students || [],
-      createdBy: event.created_by,
-      createdAt: new Date(event.created_at),
-      updatedAt: new Date(event.updated_at),
-      coverImageUrl: event.cover_image_url,
-    }));
-  },
-
-  /**
-   * Get event registrations with user details (for Society handlers)
-   */
-  async getEventRegistrations(eventId: string): Promise<RegistrationWithUser[]> {
-    const { data, error } = await supabase
-      .from('registrations')
-      .select(`
-        *,
-        users:user_id (
-          id,
-          name,
-          email
-        )
-      `)
-      .eq('event_id', eventId)
-      .order('registered_at', { ascending: false });
-
-    if (error) throw error;
-
-    return (data || []).map((reg: any) => ({
-      id: reg.id,
-      userId: reg.user_id,
-      eventId: reg.event_id,
-      timestamp: new Date(reg.registered_at),
-      attended: reg.attended || false,
-      rating: reg.rating,
-      feedback: reg.feedback,
-      user: reg.users ? {
-        id: reg.users.id,
-        name: reg.users.name,
-        email: reg.users.email,
-      } : undefined,
-    }));
-  },
-
-  /**
-   * Submit event feedback and rating (for past events)
-   */
-  async submitEventFeedback(
-    eventId: string, 
-    userId: string, 
-    rating: number, 
-    feedback?: string
-  ): Promise<void> {
-    // Validate rating
-    if (rating < 1 || rating > 5) {
-      throw new Error('Rating must be between 1 and 5');
-    }
-
-    const { error } = await supabase
-      .from('registrations')
-      .update({
-        rating,
-        feedback,
-        feedback_at: new Date().toISOString(),
-        attended: true, // Mark as attended when feedback is submitted
-      })
-      .eq('user_id', userId)
-      .eq('event_id', eventId);
-
-    if (error) throw error;
-  },
-};
