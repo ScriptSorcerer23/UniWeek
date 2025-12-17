@@ -1,6 +1,5 @@
 import { supabase } from './supabase';
 import * as ImagePicker from 'expo-image-picker';
-import { decode } from 'base64-arraybuffer';
 
 const BUCKET_NAME = 'event-images';
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
